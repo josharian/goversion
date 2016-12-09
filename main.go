@@ -162,7 +162,7 @@ func make(ref string) {
 	switch runtime.GOOS {
 	case "darwin", "linux", "freebsd", "netbsd", "openbsd", "dragonfly":
 		script = "make.bash"
-	case "windows":
+	case "windows":		// won't work without gcc
 		script = "make.bat"
 	case "plan9":
 		script = "make.rc"
@@ -182,6 +182,18 @@ func make(ref string) {
 	log.Printf("running %s", mk)
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("could not build %s: %v", ref, err)
+	}
+	// if runtime.GOOS != "windows" build was successful
+	if runtime.GOOS != "windows" {
+		return
+	}
+	
+	// workaround
+	// on windows: make.bat will silently fail, hopefully good-enough workaround: check for bin\go.exe
+	goexe := filepath.Join(parent, ref, "bin", "go.exe")
+	_, err = exec.LookPath(goexe)
+	if err != nil {
+		log.Fatalf("go.exe is not available for %s: %v", ref, err)
 	}
 }
 
