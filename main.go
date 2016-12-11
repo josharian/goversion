@@ -6,10 +6,13 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +23,7 @@ import (
 const (
 	remote    = "https://go.googlesource.com/go"
 	release14 = "release-branch.go1.4"
-	debug     = false
+	debug     = true
 )
 
 // list prints the available tagged releases.
@@ -162,7 +165,7 @@ func make(ref string) {
 	switch runtime.GOOS {
 	case "darwin", "linux", "freebsd", "netbsd", "openbsd", "dragonfly":
 		script = "make.bash"
-	case "windows":		// won't work without gcc
+	case "windows": // won't work without gcc
 		script = "make.bat"
 	case "plan9":
 		script = "make.rc"
@@ -187,7 +190,7 @@ func make(ref string) {
 	if runtime.GOOS != "windows" {
 		return
 	}
-	
+
 	// workaround
 	// on windows: make.bat will silently fail, hopefully good-enough workaround: check for bin\go.exe
 	goexe := filepath.Join(parent, ref, "bin", "go.exe")
@@ -195,6 +198,86 @@ func make(ref string) {
 	if err != nil {
 		log.Fatalf("go.exe is not available for %s: %v", ref, err)
 	}
+}
+
+// getdlindex() returns downloadable go binary list
+// source: https://storage.googleapis.com/go-builder-data/dl-index.txt
+func getdlindex() (string, error) {
+	resp, err := http.Get("https://storage.googleapis.com/go-builder-data/dl-index.txt")
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// selectBinary() builds download url from running program context
+// returns url prefix and file name otherwise error
+func selectBinary() (string, string, error) {
+	err := error(nil)
+
+	dlindex, err := getdlindex()
+	if err != nil {
+		return "", "", err
+	}
+
+	ref, _ := version(flag.Arg(1))
+
+	ext := ""
+	switch runtime.GOOS {
+	case "darwin":
+		ext = "-osx10.6.pkg" // TODO(fgergo): ask brad(?) how to handle 1.6 vs. 1.8 binaries
+	case "linux":
+		ext = ".tar.gz"
+	case "windows":
+		ext = ".zip"
+	default:
+		err = errors.New("unrecognized GOOS: " + runtime.GOOS)
+	}
+	file := ref + "." + runtime.GOOS + "-" + runtime.GOARCH + ext
+	url := "https://storage.googleapis.com/golang/" + file
+	if strings.Index(dlindex, url) == -1 {
+		return "", "", errors.New(fmt.Sprintf("binary (%s) not available", url))
+	}
+
+	return "https://storage.googleapis.com/golang/", file, err
+}
+
+// download() downloads and saves go binary install package ver
+// from remoteBinary to os.TempDir(), returns file path
+func download() (string, error) {
+	url, file, err := selectBinary()
+	if err != nil {
+		return "", err
+	}
+
+	if debug {
+		log.Printf("downloading %s\n", url+file)
+	}
+
+	resp, err := http.Get(url + file)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	path := os.TempDir()
+	err = ioutil.WriteFile(filepath.Join(path, file), body, os.ModeAppend)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(path, file), nil
 }
 
 const usage = `goversion is a tool to install and use multiple Go versions.
@@ -252,6 +335,17 @@ func main() {
 		}
 		ref := flag.Arg(1)
 		export(ref)
+		return
+	case "download":
+		// Intentionally undocumented, useful during testing.
+		path, err := download() // TODO(fgergo): remove, when ready
+		if err != nil {
+			log.Fatalf("download error: %s", err)
+		}
+		log.Printf("download ready: %s", path)
+		return
+	case "unpack":
+		// Intentionally undocumented, useful during testing.
 		return
 	case "install":
 		update()
