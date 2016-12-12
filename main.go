@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,84 @@ func list() {
 			log.Fatalf("unexpected git ls-remote line %q", line)
 		}
 		fmt.Println(strings.TrimPrefix(ff[1], "refs/tags/"))
+	}
+}
+
+func listdl() {
+	resp, err := http.Get("https://storage.googleapis.com/go-builder-data/dl-index.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	scan := bufio.NewScanner(resp.Body)
+	nosuffix := strings.NewReplacer(".tar.gz", "", ".zip", "")
+	targetos := runtime.GOOS
+	targetarch := runtime.GOARCH
+	for scan.Scan() {
+		// Example line:
+		// https://storage.googleapis.com/golang/go1.2.2.darwin-386-osx10.6.tar.gz
+		line := scan.Text()
+		// Ignore downloads that we can't use directly.
+		if strings.HasSuffix(line, ".pkg") ||
+			strings.HasSuffix(line, ".msi") ||
+			strings.HasSuffix(line, ".sha256") ||
+			strings.HasSuffix(line, ".src.tar.gz") ||
+			!strings.Contains(line, targetos) {
+			continue
+		}
+		// Strip down to just the filename.
+		// go1.2.2.darwin-386-osx10.6.tar.gz
+		i := strings.LastIndexByte(line, '/')
+		if i == -1 {
+			continue
+		}
+		line = line[i+1:]
+		// Eliminate file suffixes.
+		// go1.2.2.darwin-386-osx10.6
+		line = nosuffix.Replace(line)
+		// Break up remainder into version and platform.
+		// The pattern is version.platform, but platform can contain periods.
+		// Instead, split on GOOS.
+		// go1.2.2 and darwin-386-osx10.6
+		i = strings.Index(line, targetos)
+		vers, plat := line[:i-1], line[i:]
+		// Platform can contain two or three components.
+		// If two, GOOS and GOARCH.
+		// If three, GOOS, GOARCH, sub-GOARCH.
+		// We know GOOS matches.
+		// GOARCH and sub-GOARCH have a lot of variation.
+		platx := strings.Split(plat, "-")
+		switch len(platx) {
+		default:
+			continue // Not the droid we're looking for.
+		case 3:
+			// Only happens with darwin.
+			// Assume no-one runs 10.6 anymore.
+			if platx[2] == "osx10.6" {
+				continue
+			}
+			platx = platx[:2]
+		case 2:
+			// Continued below.
+		}
+		arch := platx[1]
+		// Clean up arch.
+		// go1.6beta1 has linux-arm and linux-arm6 downloads.
+		// Every other release has armv6l.
+		// Skip plain arm and then map arm6 and armv6l to arm, to match GOARCH naming.
+		switch arch {
+		case "arm":
+			continue
+		case "arm6", "armv6l":
+			arch = "arm"
+		}
+		if arch != targetarch {
+			continue
+		}
+		fmt.Println(vers)
+	}
+	if scan.Err() != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -261,6 +340,9 @@ func main() {
 	switch flag.Arg(0) {
 	case "list":
 		list()
+		return
+	case "listdl":
+		listdl()
 		return
 	case "update":
 		// Intentionally undocumented, useful during testing.
