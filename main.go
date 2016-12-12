@@ -56,6 +56,16 @@ func repoParent() string {
 	return filepath.Join(list[0], "src", "golang.org", "x")
 }
 
+func cmdgo(parent, ref string) (path string, exist bool) {
+	e := "go"
+	if runtime.GOOS == "windows" {
+		e = "go.exe"
+	}
+	path = filepath.Join(parent, ref, "bin", e)
+	_, err := os.Stat(path)
+	return path, !os.IsNotExist(err)
+}
+
 // update clones or updates the Go repo.
 func update() {
 	parent := repoParent()
@@ -274,8 +284,8 @@ func main() {
 
 		parent := repoParent()
 		bootstrap := filepath.Join(parent, release14)
-		cmdgo := filepath.Join(bootstrap, "bin", "go")
-		if _, err := os.Stat(cmdgo); os.IsNotExist(err) {
+		_, exist := cmdgo(parent, release14)
+		if !exist {
 			export(release14)
 			make(release14)
 		}
@@ -293,12 +303,11 @@ func main() {
 
 	// Execute command with the requested version.
 	parent := repoParent()
-	goroot := filepath.Join(parent, ref)
-	cmdgo := filepath.Join(goroot, "bin", "go")
-	if _, err := os.Stat(cmdgo); os.IsNotExist(err) {
-		log.Fatalf("%s not found. Have you run %s install %s?", cmdgo, os.Args[0], ref)
+	path, exist := cmdgo(parent, ref)
+	if !exist {
+		log.Fatalf("%s not found. Have you run %s install %s?", path, os.Args[0], ref)
 	}
-	cmd := exec.Command(cmdgo, flag.Args()[1:]...)
+	cmd := exec.Command(path, flag.Args()[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
