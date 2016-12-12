@@ -206,13 +206,16 @@ func make(ref string) {
 	}
 	cmd := exec.Command(mk)
 	cmd.Dir = srcdir
-	if debug {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
 	log.Printf("running %s", mk)
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("could not build %s: %v", ref, err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Fatalf("could not build %s: %v\n\n%s", ref, err, out)
+	}
+	// Confirm that cmd/go got build.
+	// make.bat doesn't set its return code correctly
+	// in (at a minimum) all versions up to 1.8.1beta.
+	if _, exist := cmdgo(parent, ref); !exist {
+		log.Fatalf("could not find cmd/go:\n\n%s", out)
 	}
 }
 
