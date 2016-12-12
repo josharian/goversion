@@ -156,6 +156,27 @@ func export(ref string) {
 }
 
 func make(ref string) {
+	// Check whether we need a C compiler, and if so, whether we have one.
+	if os.Getenv("CGO_ENABLED") != "0" {
+		var havecc bool
+		ccs := []string{"gcc", "clang"}
+		if cc := os.Getenv("CC"); cc != "" {
+			ccs = append(ccs, cc)
+		}
+		for _, cc := range ccs {
+			if cc == "" {
+				continue
+			}
+			if _, err := exec.LookPath(cc); err != nil {
+				continue
+			}
+			havecc = true
+			break
+		}
+		if !havecc {
+			log.Fatalf("could not find a C compiler, tried %s", ccs)
+		}
+	}
 	parent := repoParent()
 	srcdir := filepath.Join(parent, ref, "src")
 	var script string
